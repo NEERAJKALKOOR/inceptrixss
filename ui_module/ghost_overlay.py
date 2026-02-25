@@ -33,16 +33,17 @@ class GhostTextOverlay(QWidget):
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint | 
             Qt.FramelessWindowHint | 
-            Qt.Tool |  # Prevents taskbar icon
-            Qt.WindowTransparentForInput  # CRITICAL: No focus stealing
+            Qt.Tool  # Prevents taskbar icon
+            # Removed WindowTransparentForInput to make it more visible for testing
         )
         
-        # Make window transparent
+        # Make window semi-transparent (more visible for testing)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setWindowOpacity(OVERLAY_OPACITY)
+        self.setWindowOpacity(0.95)  # More visible than default
         
-        # Set geometry
-        self.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
+        # Fixed position for testing (top-right corner)
+        screen = QApplication.primaryScreen().geometry()
+        self.setGeometry(screen.width() - 650, 50, 600, 150)
         
         # Layout
         layout = QVBoxLayout()
@@ -81,6 +82,11 @@ class GhostTextOverlay(QWidget):
             suggestion: AI suggested completion/replacement
             confidence: AI confidence score (0.0 to 1.0)
         """
+        print(f"👻 display_suggestion() called!")
+        print(f"   Current: '{current_text}'")
+        print(f"   Suggestion: '{suggestion}'")
+        print(f"   Confidence: {confidence}")
+        
         self.current_text = current_text
         self.ghost_text = suggestion
         self.confidence = confidence
@@ -93,9 +99,14 @@ class GhostTextOverlay(QWidget):
         self._update_confidence_display(confidence)
         
         # Show overlay
+        print(f"   Is visible: {self.is_visible}")
         if not self.is_visible:
+            print("   📢 Calling self.show()...")
             self.show()
             self.is_visible = True
+            print("   ✅ Ghost text should be visible now!")
+        else:
+            print("   ℹ️ Already visible, just updating content")
             
     def _build_ghost_html(self, current_text: str, suggestion: str, confidence: float) -> str:
         """Build HTML with ghost text styling"""

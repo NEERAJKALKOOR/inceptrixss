@@ -98,6 +98,7 @@ class TextManager:
     def insert_text(self, text: str, replace_selection: bool = False):
         """
         Insert text at cursor position.
+        Enhanced for browser and Word compatibility.
         
         Args:
             text: Text to insert
@@ -109,16 +110,42 @@ class TextManager:
                 pyautogui.press('delete')
                 time.sleep(0.05)
             
-            # Type the text
-            # Use paste for better reliability with special characters
-            original_clipboard = pyperclip.paste()
-            pyperclip.copy(text)
-            pyautogui.hotkey('ctrl', 'v')
-            time.sleep(0.1)
-            pyperclip.copy(original_clipboard)
+            # For browsers and Word, use typing instead of paste
+            if self._needs_typing_mode():
+                # Type character by character for better compatibility
+                pyautogui.write(text, interval=0.01)
+                time.sleep(0.1)
+            else:
+                # Use paste for faster insertion in supported apps
+                original_clipboard = pyperclip.paste()
+                pyperclip.copy(text)
+                pyautogui.hotkey('ctrl', 'v')
+                time.sleep(0.15)
+                pyperclip.copy(original_clipboard)
             
         except Exception as e:
             print(f"❌ Error inserting text: {e}")
+            # Fallback: try typing if paste failed
+            try:
+                pyautogui.write(text, interval=0.01)
+            except:
+                pass
+    
+    def _needs_typing_mode(self) -> bool:
+        """
+        Check if current app needs character-by-character typing.
+        Browsers and Word work better with typing than paste.
+        """
+        if not self.last_app_name:
+            return False
+        
+        typing_apps = [
+            'chrome.exe', 'firefox.exe', 'msedge.exe', 'brave.exe',
+            'winword.exe', 'excel.exe', 'powerpnt.exe',
+            'teams.exe', 'slack.exe', 'discord.exe'
+        ]
+        
+        return any(app in self.last_app_name.lower() for app in typing_apps)
     
     def replace_text(self, old_text: str, new_text: str):
         """

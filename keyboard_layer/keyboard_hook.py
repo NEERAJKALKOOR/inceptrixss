@@ -107,47 +107,56 @@ class KeyboardMonitor:
     
     def _is_hotkey_pressed(self, hotkey: str) -> bool:
         """Check if a hotkey combination is pressed"""
-        # Parse hotkey string (e.g., "ctrl+space")
+        # Parse hotkey string (e.g., "ctrl+alt+k")
         parts = hotkey.lower().split('+')
         
-        required_keys = set()
-        for part in parts:
-            if part == 'ctrl':
-                required_keys.add(Key.ctrl_l)
-                required_keys.add(Key.ctrl_r)
-            elif part == 'shift':
-                required_keys.add(Key.shift_l)
-                required_keys.add(Key.shift_r)
-            elif part == 'alt':
-                required_keys.add(Key.alt_l)
-                required_keys.add(Key.alt_r)
-            elif part == 'space':
-                required_keys.add(Key.space)
-            elif part == 'tab':
-                required_keys.add(Key.tab)
-            elif part == 'esc':
-                required_keys.add(Key.esc)
-            elif len(part) == 1:
-                required_keys.add(KeyCode.from_char(part))
+        # Build required modifiers and key
+        needs_ctrl = 'ctrl' in parts
+        needs_shift = 'shift' in parts
+        needs_alt = 'alt' in parts
         
-        # Check if any variant of required keys is pressed
-        for req_key in required_keys:
-            if req_key in self.current_keys:
-                # At least one variant is pressed
-                continue
-            # Check if this is a modifier with alternate variant
-            if req_key in [Key.ctrl_l, Key.ctrl_r]:
-                if Key.ctrl_l in self.current_keys or Key.ctrl_r in self.current_keys:
-                    continue
-            if req_key in [Key.shift_l, Key.shift_r]:
-                if Key.shift_l in self.current_keys or Key.shift_r in self.current_keys:
-                    continue
-            if req_key in [Key.alt_l, Key.alt_r]:
-                if Key.alt_l in self.current_keys or Key.alt_r in self.current_keys:
-                    continue
+        # Get the non-modifier key
+        char_key = None
+        special_key = None
+        for part in parts:
+            if part not in ['ctrl', 'shift', 'alt']:
+                if part == 'space':
+                    special_key = Key.space
+                elif part == 'tab':
+                    special_key = Key.tab
+                elif part == 'esc':
+                    special_key = Key.esc
+                elif part == 'f12':
+                    special_key = Key.f12
+                elif part == 'f11':
+                    special_key = Key.f11
+                elif part == 'f10':
+                    special_key = Key.f10
+                elif len(part) == 1:
+                    char_key = part
+        
+        # Check modifiers
+        has_ctrl = Key.ctrl_l in self.current_keys or Key.ctrl_r in self.current_keys
+        has_shift = Key.shift_l in self.current_keys or Key.shift_r in self.current_keys
+        has_alt = Key.alt_l in self.current_keys or Key.alt_r in self.current_keys
+        
+        # Check if all required modifiers are pressed
+        if needs_ctrl and not has_ctrl:
+            return False
+        if needs_shift and not has_shift:
+            return False
+        if needs_alt and not has_alt:
             return False
         
-        return len(required_keys) > 0
+        # Check if the main key is pressed
+        if special_key:
+            return special_key in self.current_keys
+        elif char_key:
+            # Check for both upper and lower case
+            return (KeyCode.from_char(char_key) in self.current_keys or
+                    KeyCode.from_char(char_key.upper()) in self.current_keys)
+        
+        return False
     
     def _handle_text_input(self, key):
         """Track text being typed"""

@@ -4,7 +4,7 @@ Keyboard Layer Configuration
 import os
 
 # Hotkey Configuration
-ACTION_KEY = "ctrl+space"  # Trigger AI suggestion
+ACTION_KEY = "f12"  # Trigger AI suggestion
 VOICE_KEY = "ctrl+shift+v"  # Push-to-talk voice input
 ACCEPT_KEY = "tab"  # Accept AI suggestion (when ghost text visible)
 REJECT_KEY = "esc"  # Reject AI suggestion

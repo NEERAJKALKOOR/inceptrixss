@@ -5,6 +5,7 @@ Role 1 (Keyboard) ↔ Role 3 (UI) ↔ Role 2 (AI)
 import sys
 import time
 from typing import Optional
+from PyQt5.QtCore import QTimer, QObject, pyqtSignal
 from keyboard_layer.keyboard_hook import keyboard_monitor
 from keyboard_layer.text_manager import text_manager
 from keyboard_layer.config import SHOW_GHOST_TEXT, DEBUG_MODE
@@ -14,13 +15,22 @@ sys.path.insert(0, '.')
 from ui_module.interface import UIController
 
 
-class KeyboardService:
+class KeyboardService(QObject):
     """
     Main integration service that connects:
     - Keyboard Layer (this)
     - UI Module (ghost text, voice)
     - AI Engine (via UI Module)
+    
+    Uses Qt signals to ensure thread-safe UI updates.
     """
+    
+    # Signals for thread-safe communication
+    ai_request_signal = pyqtSignal(str, str, str)  # text, action, app (F12 replace)
+    ghost_text_signal = pyqtSignal(str, str, str)  # text, action, app (auto ghost text)
+    suggestion_accept_signal = pyqtSignal()
+    suggestion_reject_signal = pyqtSignal()
+    voice_request_signal = pyqtSignal(str)  # context
     
     def __init__(self, ui_mock_mode: bool = False, ai_mock_mode: bool = False):
         """
@@ -30,6 +40,8 @@ class KeyboardService:
             ui_mock_mode: Run UI in mock mode (for testing)
             ai_mock_mode: Run AI in mock mode (for testing)
         """
+        super().__init__()
+        
         self.keyboard_monitor = keyboard_monitor
         self.text_manager = text_manager
         self.ui_controller = UIController(mock_mode=ui_mock_mode)
@@ -37,6 +49,15 @@ class KeyboardService:
         self.is_running = False
         self.current_suggestion = None
         self.current_context = ""
+        self.request_in_progress = False
+        self.last_request_time = 0
+        
+        # Connect signals to handlers (Qt thread-safe)
+        self.ai_request_signal.connect(self._process_ai_request)
+        self.ghost_text_signal.connect(self._process_ghost_text_request)
+        self.suggestion_accept_signal.connect(self._process_accept_suggestion)
+        self.suggestion_reject_signal.connect(self._process_reject_suggestion)
+        self.voice_request_signal.connect(self._process_voice_request)
         
         # Connect keyboard callbacks to handlers
         self._setup_callbacks()
@@ -59,8 +80,7 @@ class KeyboardService:
         print("🚀 AI KEYBOARD SERVICE STARTING")
         print("=" * 60)
         
-        # Initialize UI
-        self.ui_controller.initialize()
+        # UI is already initialized in __init__, just confirm
         print("✅ UI Module initialized")
         
         # Start keyboard monitoring
@@ -76,10 +96,10 @@ class KeyboardService:
         
         print("\n" + "=" * 60)
         print("HOTKEYS:")
-        print("  Ctrl+Space  - Request AI suggestion")
+        print("  F12          - Request AI suggestion")
         print("  Ctrl+Shift+V - Voice input (push-to-talk)")
-        print("  Tab         - Accept ghost text suggestion")
-        print("  Esc         - Reject ghost text suggestion")
+        print("  Tab          - Accept ghost text suggestion")
+        print("  Esc          - Reject ghost text suggestion")
         print("=" * 60)
         print("\n✅ Service running! Start typing in any app...")
         print("   Press Ctrl+C to stop\n")
@@ -99,38 +119,45 @@ class KeyboardService:
         
     def _handle_action_key(self, context: str):
         """
-        Handle Ctrl+Space - Request AI suggestion.
+        Handle F12 - Request AI suggestion.
+        ONLY works with selected text - replaces selection with AI response.
         
         Args:
-            context: Current text buffer
+            context: Current text buffer (ignored - only selected text is used)
         """
+        # Debounce: ignore if request already in progress
+        current_time = time.time()
+        if self.request_in_progress:
+            print("⏳ AI request already in progress, please wait...")
+            return
+        
+        # Debounce: ignore if less than 1 second since last request
+        if current_time - self.last_request_time < 1.0:
+            print("⏱️ Please wait 1 second between requests")
+            return
+        
         if DEBUG_MODE:
-            print(f"\n🎯 Action key pressed! Context: '{context}'")
+            print(f"\n🎯 Action key pressed!")
         
         # Get active window
         window, app = self.text_manager.get_active_window_info()
         
-        # Get selected text (if any)
+        # Get selected text - REQUIRED
         selected = self.text_manager.get_selected_text()
         
-        # Use selected text or buffer
-        text_to_process = selected if selected else context
-        
-        if not text_to_process or len(text_to_process) < 2:
-            print("⚠️ No text to process")
+        # Only process if text is selected
+        if not selected or len(selected) < 2:
+            print("⚠️ No text selected! Select text first, then press F12.")
             return
         
-        print(f"\n🤖 Requesting AI suggestion for: '{text_to_process[:50]}...'")
+        print(f"\n🤖 Sending to AI: '{selected[:50]}...'")
         
-        # Request AI suggestion via UI module
-        self.ui_controller.request_ai_suggestion(
-            text=text_to_process,
-            action="autocomplete"
-        )
+        # Mark request as in progress
+        self.request_in_progress = True
+        self.last_request_time = current_time
         
-        # Mark suggestion as active
-        self.keyboard_monitor.set_suggestion_active(True)
-        self.current_context = text_to_process
+        # Emit signal for thread-safe UI update
+        self.ai_request_signal.emit(selected, "autocomplete", app or "general")
         
     def _handle_voice_key(self):
         """Handle Ctrl+Shift+V - Voice input"""
@@ -139,28 +166,96 @@ class KeyboardService:
         # Get current context
         context = self.keyboard_monitor.get_buffer()
         
-        # Capture voice and refine
-        refined_text = self.ui_controller.capture_voice_and_refine(context)
+        # Emit signal for thread-safe voice handling
+        self.voice_request_signal.emit(context)
         
-        if refined_text and not refined_text.startswith("[Error"):
-            print(f"✅ Voice refined: '{refined_text}'")
-            
-            # Display as ghost text
-            self.ui_controller.display_suggestion(
-                suggestion=refined_text,
-                confidence=95
-            )
-            
-            # Mark suggestion as active
-            self.keyboard_monitor.set_suggestion_active(True)
-            self.current_suggestion = refined_text
-        else:
-            print("❌ Voice refinement failed")
+        # Mark suggestion as active
+        self.keyboard_monitor.set_suggestion_active(True)
     
     def _handle_accept_suggestion(self):
         """Handle Tab - Accept AI suggestion"""
         print("\n✅ Accepting suggestion...")
         
+        # Emit signal for thread-safe handling
+        self.suggestion_accept_signal.emit()
+    
+    def _handle_reject_suggestion(self):
+        """Handle Esc - Reject AI suggestion"""
+        print("\n❌ Rejecting suggestion...")
+        
+        # Emit signal for thread-safe handling
+        self.suggestion_reject_signal.emit()
+    
+    def _handle_text_change(self, text: str):
+        """
+        Handle automatic AI suggestion on text change (debounced).
+        Shows GHOST TEXT that can be accepted with Tab.
+        
+        Args:
+            text: Current text buffer
+        """
+        if DEBUG_MODE:
+            print(f"\n📝 Text changed: '{text}'")
+        
+        # Get active app
+        _, app = self.text_manager.get_active_window_info()
+        
+        print(f"👻 Ghost text triggered for app: {app}, text: '{text[:30]}...'")
+        
+        # Emit signal for thread-safe ghost text display
+        self.ghost_text_signal.emit(text, "autocomplete", app or "general")
+        
+        # Mark suggestion as active
+        self.keyboard_monitor.set_suggestion_active(True)
+    
+    # === Signal Handlers (Qt thread-safe) ===
+    
+    def _process_ghost_text_request(self, text: str, action: str, app: str):
+        """Process ghost text request in Qt thread - displays as overlay"""
+        print(f"👻 Ghost text request for: '{text[:50]}...'")
+        
+        # Request AI suggestion (will show as ghost text overlay)
+        self.ui_controller.request_ai_suggestion(text, action, app)
+    
+    def _process_ai_request(self, text: str, action: str, app: str):
+        """Process AI request in Qt thread - FOR F12 REPLACE ACTION ONLY"""
+        try:
+            print(f"🔧 DEBUG: _process_ai_request called (F12 replace)")
+            print(f"   Text: '{text[:50]}'")
+            print(f"   Action: {action}, App: {app}")
+            
+            # Get AI response
+            print("   Calling ai_integration.process_text()...")
+            ai_response = self.ui_controller.ai_integration.process_text(text, action, app)
+            
+            print(f"   AI Response received: {ai_response}")
+            
+            # Check if successful
+            if ai_response.get("status") == "success":
+                result_text = ai_response.get("result_text", "")
+                
+                if result_text:
+                    print(f"\n✅ AI Response: '{result_text[:100]}...'")
+                    print(f"📝 Replacing selected text...")
+                    
+                    # Small delay to ensure selection is still active
+                    time.sleep(0.2)
+                    
+                    # Replace the selected text with AI response
+                    self.text_manager.insert_text(result_text, replace_selection=True)
+                    print(f"✅ Text replaced!")
+                else:
+                    print("⚠️ No result text from AI")
+            else:
+                print(f"❌ AI request failed: {ai_response.get('status', 'unknown error')}")
+        
+        finally:
+            # Mark request as complete
+            self.request_in_progress = False
+            print("🏁 Request complete")
+    
+    def _process_accept_suggestion(self):
+        """Process suggestion acceptance in Qt thread"""
         # Get the suggestion from UI
         suggestion = self.ui_controller.accept_suggestion()
         
@@ -176,46 +271,36 @@ class KeyboardService:
         self.keyboard_monitor.set_suggestion_active(False)
         self.current_suggestion = None
     
-    def _handle_reject_suggestion(self):
-        """Handle Esc - Reject AI suggestion"""
-        print("\n❌ Rejecting suggestion...")
-        
+    def _process_reject_suggestion(self):
+        """Process suggestion rejection in Qt thread"""
         self.ui_controller.reject_suggestion()
         
         # Mark suggestion as inactive
         self.keyboard_monitor.set_suggestion_active(False)
         self.current_suggestion = None
     
-    def _handle_text_change(self, text: str):
-        """
-        Handle automatic AI suggestion on text change (debounced).
-        
-        Args:
-            text: Current text buffer
-        """
-        if DEBUG_MODE:
-            print(f"\n📝 Text changed: '{text}'")
-        
-        # Only auto-suggest if text editor
-        if not self.text_manager.is_text_editor():
-            return
-        
-        # Request autocomplete
-        self.ui_controller.request_ai_suggestion(
-            text=text,
-            action="autocomplete"
-        )
-        
-        # Mark suggestion as active
-        self.keyboard_monitor.set_suggestion_active(True)
+    def _process_voice_request(self, context: str):
+        """Process voice request in Qt thread"""
+        # Capture voice and refine (this handles display internally)
+        self.ui_controller.capture_voice_and_refine(context)
     
     def run_forever(self):
-        """Run the service in a blocking loop"""
+        """Run the service in a blocking loop with Qt event processing"""
         self.start()
         
         try:
-            while self.is_running:
-                time.sleep(0.1)
+            # Use Qt event loop instead of time.sleep to allow signal processing
+            from PyQt5.QtCore import QTimer
+            
+            # Create a timer to keep checking if service is running
+            check_timer = QTimer()
+            check_timer.timeout.connect(lambda: None)  # Do nothing, just process events
+            check_timer.start(100)  # Check every 100ms
+            
+            # Run Qt event loop (this processes signals)
+            print("🔄 Starting Qt event loop...")
+            self.ui_controller.app.exec_()
+            
         except KeyboardInterrupt:
             print("\n\n⚠️ Keyboard interrupt detected")
         finally:

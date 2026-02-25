@@ -63,11 +63,17 @@ class UIController(QObject):
                     "status": "success"
                 }
         """
+        print(f"📥 display_suggestion() received AI response:")
+        print(f"   Status: {ai_response.get('status', 'unknown')}")
+        print(f"   Result text: '{ai_response.get('result_text', '')}'")
+        print(f"   Confidence: {ai_response.get('confidence', 0.0)}")
+        
         result_text = ai_response.get("result_text", "")
         confidence = ai_response.get("confidence", 0.5)
         current_text = self.current_context.get("current_text", "")
         
         if result_text and ai_response.get("status") == "success":
+            print(f"✅ Calling overlay.display_suggestion()...")
             self.overlay.display_suggestion(current_text, result_text, confidence)
         else:
             print(f"⚠️ Cannot display suggestion: {ai_response.get('status', 'unknown error')}")
