@@ -46,6 +46,14 @@ class KeyboardService(QObject):
         self.text_manager = text_manager
         self.ui_controller = UIController(mock_mode=ui_mock_mode)
         
+        # Override AI mock mode if specified
+        if not ai_mock_mode:
+            self.ui_controller.ai_integration.mock_mode = False
+            print("✅ AI Integration: REAL MODE (Ollama)")
+        else:
+            self.ui_controller.ai_integration.mock_mode = True
+            print("🎭 AI Integration: MOCK MODE")
+        
         self.is_running = False
         self.current_suggestion = None
         self.current_context = ""
