@@ -1,7 +1,9 @@
 PyQt5>=5.15.0
 pyaudio>=0.2.11
-SpeechRecognition>=3.10.0
+openai-whisper>=20231117
 requests>=2.28.0
+numpy>=1.24.0
 
-# Optional: For offline speech recognition
-# pocketsphinx>=5.0.0
+# Note: Whisper requires ffmpeg installed on system
+# Windows: choco install ffmpeg OR download from https://ffmpeg.org/
+# The base model (~140MB) will be downloaded on first use

@@ -2,7 +2,6 @@
 Voice Input Module - Push-to-talk with offline speech-to-text
 Captures microphone input and converts to text for AI refinement
 """
-import pyaudio
 import wave
 import threading
 import tempfile
@@ -10,13 +9,22 @@ import os
 from typing import Callable, Optional
 from ui_module.config import SAMPLE_RATE, VOICE_ENABLED
 
-# Try to import speech recognition (offline capable)
+# Try to import pyaudio (optional)
 try:
-    import speech_recognition as sr
-    SPEECH_RECOGNITION_AVAILABLE = True
+    import pyaudio
+    PYAUDIO_AVAILABLE = True
 except ImportError:
-    SPEECH_RECOGNITION_AVAILABLE = False
-    print("⚠️ speech_recognition not installed. Voice input will use mock mode.")
+    PYAUDIO_AVAILABLE = False
+    print("⚠️ pyaudio not installed. Voice input will use mock mode.")
+
+# Try to import whisper for speech recognition (offline capable)
+try:
+    import whisper
+    import numpy as np
+    WHISPER_AVAILABLE = True
+except ImportError:
+    WHISPER_AVAILABLE = False
+    print("⚠️ openai-whisper not installed. Voice input will use mock mode.")
 
 
 class VoiceInputHandler:
@@ -25,15 +33,18 @@ class VoiceInputHandler:
     Non-blocking, does not interfere with typing.
     """
     
-    def __init__(self, mock_mode: bool = not VOICE_ENABLED):
-        self.mock_mode = mock_mode or not SPEECH_RECOGNITION_AVAILABLE
+    def __init__(self, mock_mode: bool = not VOICE_ENABLED, model_size: str = "base"):
+        self.mock_mode = mock_mode or not (WHISPER_AVAILABLE and PYAUDIO_AVAILABLE)
         self.is_recording = False
         self.audio_frames = []
-        self.recognizer = sr.Recognizer() if SPEECH_RECOGNITION_AVAILABLE else None
+        
+        # Load Whisper model (lazy loading on first use)
+        self.model = None
+        self.model_size = model_size  # tiny, base, small, medium, large (tiny=39MB, base=140MB)
         
         # Audio settings
         self.chunk = 1024
-        self.format = pyaudio.paInt16
+        self.format = pyaudio.paInt16 if PYAUDIO_AVAILABLE else None
         self.channels = 1
         self.rate = SAMPLE_RATE
         
@@ -49,6 +60,12 @@ class VoiceInputHandler:
         
         if self.is_recording:
             return  # Already recording
+        
+        if not PYAUDIO_AVAILABLE:
+            print("⚠️ PyAudio not available. Using mock mode.")
+            self.mock_mode = True
+            self.is_recording = True
+            return
         
         try:
             self.audio = pyaudio.PyAudio()
@@ -72,7 +89,9 @@ class VoiceInputHandler:
             
         except Exception as e:
             print(f"❌ Error starting voice recording: {e}")
-            self.is_recording = False
+            print("⚠️ Falling back to mock mode")
+            self.mock_mode = True
+            self.is_recording = True
     
     def _record_audio(self):
         """Background thread to record audio"""
@@ -152,31 +171,30 @@ class VoiceInputHandler:
     
     def _transcribe_audio(self, audio_file: str) -> str:
         """
-        Transcribe audio file to text using offline speech recognition.
-        Falls back to Sphinx (offline) if available.
+        Transcribe audio file to text using OpenAI Whisper (offline).
+        Whisper provides state-of-the-art accuracy with 99+ language support.
         """
-        if not self.recognizer:
-            return "[Speech recognition not available]"
+        if not WHISPER_AVAILABLE:
+            return "[Whisper not available]"
         
         try:
-            with sr.AudioFile(audio_file) as source:
-                audio_data = self.recognizer.record(source)
-                
-                # Try offline recognition first (Sphinx)
-                try:
-                    text = self.recognizer.recognize_sphinx(audio_data)
-                    return text
-                except sr.UnknownValueError:
-                    return "[Could not understand audio]"
-                except sr.RequestError:
-                    # Sphinx not installed, try Google (requires internet)
-                    try:
-                        text = self.recognizer.recognize_google(audio_data)
-                        return text
-                    except:
-                        return "[Speech recognition failed - install pocketsphinx for offline mode]"
+            # Load model on first use (lazy loading)
+            if self.model is None:
+                print(f"🔄 Loading Whisper {self.model_size} model (one-time setup)...")
+                self.model = whisper.load_model(self.model_size)
+                print(f"✅ Whisper model loaded successfully")
+            
+            # Transcribe audio (requires ffmpeg)
+            result = self.model.transcribe(audio_file, fp16=False)
+            text = result["text"].strip()
+            
+            if not text:
+                return "[Could not understand audio]"
+            
+            return text
                         
         except Exception as e:
+            print(f"❌ Whisper transcription error: {e}")
             return f"[Error: {str(e)}]"
     
     def cancel_recording(self):
