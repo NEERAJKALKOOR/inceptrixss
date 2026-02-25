@@ -33,32 +33,33 @@ class GhostTextOverlay(QWidget):
         self.setWindowFlags(
             Qt.WindowStaysOnTopHint | 
             Qt.FramelessWindowHint | 
-            Qt.Tool  # Prevents taskbar icon
-            # Removed WindowTransparentForInput to make it more visible for testing
+            Qt.Tool |  # Prevents taskbar icon
+            Qt.WindowTransparentForInput  # No focus stealing
         )
         
-        # Make window semi-transparent (more visible for testing)
+        # Make window semi-transparent
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setWindowOpacity(0.95)  # More visible than default
+        self.setWindowOpacity(0.9)
         
-        # Fixed position for testing (top-right corner)
-        screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(screen.width() - 650, 50, 600, 150)
+        # Will be positioned at cursor dynamically
+        self.setGeometry(100, 100, 600, 100)
         
         # Layout
         layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(5, 5, 5, 5)
         
-        # Text display area
+        # Text display area - inline style like Copilot
         self.text_display = QTextEdit()
         self.text_display.setReadOnly(True)
-        self.text_display.setFont(QFont("Segoe UI", 12))
+        self.text_display.setFont(QFont("Consolas", 11))
         self.text_display.setStyleSheet(f"""
             QTextEdit {{
-                background-color: rgba(255, 255, 255, 240);
-                border: 2px solid #cccccc;
-                border-radius: 8px;
-                padding: 8px;
+                background-color: rgba(40, 40, 40, 220);
+                color: rgba(150, 150, 150, 255);
+                border: 1px solid rgba(100, 100, 100, 180);
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-style: italic;
             }}
         """)
         
@@ -75,7 +76,7 @@ class GhostTextOverlay(QWidget):
         
     def display_suggestion(self, current_text: str, suggestion: str, confidence: float = 0.9):
         """
-        Display ghost text suggestion
+        Display ghost text suggestion at cursor position
         
         Args:
             current_text: User's current typed text
@@ -98,6 +99,9 @@ class GhostTextOverlay(QWidget):
         # Update confidence indicator
         self._update_confidence_display(confidence)
         
+        # Position at cursor
+        self._position_at_cursor()
+        
         # Show overlay
         print(f"   Is visible: {self.is_visible}")
         if not self.is_visible:
@@ -107,6 +111,24 @@ class GhostTextOverlay(QWidget):
             print("   ✅ Ghost text should be visible now!")
         else:
             print("   ℹ️ Already visible, just updating content")
+    
+    def _position_at_cursor(self):
+        """Position overlay at current cursor location"""
+        try:
+            from PyQt5.QtGui import QCursor
+            cursor_pos = QCursor.pos()
+            
+            # Position below and to the right of cursor
+            x = cursor_pos.x() + 10
+            y = cursor_pos.y() + 25
+            
+            # Adjust size based on text length
+            text_len = len(self.ghost_text)
+            width = min(max(300, text_len * 8), 600)
+            
+            self.setGeometry(x, y, width, 80)
+        except Exception as e:
+            print(f"⚠️ Could not position at cursor: {e}")
             
     def _build_ghost_html(self, current_text: str, suggestion: str, confidence: float) -> str:
         """Build HTML with ghost text styling"""

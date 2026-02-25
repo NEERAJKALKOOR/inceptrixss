@@ -132,6 +132,10 @@ class KeyboardMonitor:
                     special_key = Key.f11
                 elif part == 'f10':
                     special_key = Key.f10
+                elif part == 'f9':
+                    special_key = Key.f9
+                elif part == 'f8':
+                    special_key = Key.f8
                 elif len(part) == 1:
                     char_key = part
         

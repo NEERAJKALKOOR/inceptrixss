@@ -105,20 +105,34 @@ class TextManager:
             replace_selection: If True, replaces selected text
         """
         try:
+            # CRITICAL: Wait for physical key release (Alt+F12 issue)
+            time.sleep(0.3)  # Longer delay for physical key release
+            
+            # Explicitly release all modifier keys
+            for key in ['alt', 'ctrl', 'shift', 'win']:
+                try:
+                    pyautogui.keyUp(key)
+                except:
+                    pass
+            
+            # Additional delay after key release
+            time.sleep(0.2)
+            
             if replace_selection:
                 # Delete selected text first
                 pyautogui.press('delete')
                 time.sleep(0.05)
             
-            # For browsers and Word, use typing instead of paste
+            # For browsers, use typing instead of paste
             if self._needs_typing_mode():
                 # Type character by character for better compatibility
                 pyautogui.write(text, interval=0.01)
                 time.sleep(0.1)
             else:
-                # Use paste for faster insertion in supported apps
+                # Use paste for Word and other apps (avoids modifier key issues)
                 original_clipboard = pyperclip.paste()
                 pyperclip.copy(text)
+                time.sleep(0.05)
                 pyautogui.hotkey('ctrl', 'v')
                 time.sleep(0.15)
                 pyperclip.copy(original_clipboard)
@@ -134,14 +148,14 @@ class TextManager:
     def _needs_typing_mode(self) -> bool:
         """
         Check if current app needs character-by-character typing.
-        Browsers and Word work better with typing than paste.
+        Browsers work better with typing than paste.
+        Word works better with PASTE to avoid modifier key issues.
         """
         if not self.last_app_name:
             return False
         
         typing_apps = [
             'chrome.exe', 'firefox.exe', 'msedge.exe', 'brave.exe',
-            'winword.exe', 'excel.exe', 'powerpnt.exe',
             'teams.exe', 'slack.exe', 'discord.exe'
         ]
         
