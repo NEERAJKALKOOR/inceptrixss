@@ -79,7 +79,7 @@ class LLMRunner:
         }
         try:
             # Reduced timeout for better responsiveness
-            response = requests.post(OLLAMA_URL, json=payload, timeout=15)
+            response = requests.post(OLLAMA_URL, json=payload, timeout=60)
             response.raise_for_status()
             result = response.json()
             
@@ -105,8 +105,29 @@ class LLMRunner:
     
     def _clean_ai_output(self, text: str) -> str:
         """Remove echoed prompt parts and extract only the final output"""
+        # If AI returned markdown code block, extract it
+        if "```" in text:
+            # Extract code from markdown block
+            parts = text.split("```")
+            if len(parts) >= 3:
+                # Get the code block (between first and second ```)
+                code_block = parts[1]
+                # Remove language identifier if present (e.g., "python\n")
+                if code_block.startswith("python\n") or code_block.startswith("python "):
+                    code_block = code_block.split("\n", 1)[1] if "\n" in code_block else code_block
+                elif code_block.startswith("javascript\n") or code_block.startswith("js\n"):
+                    code_block = code_block.split("\n", 1)[1] if "\n" in code_block else code_block
+                
+                # Get explanation after code block if exists
+                explanation = parts[2].strip() if len(parts) > 2 else ""
+                
+                # Return code + explanation
+                if explanation:
+                    return code_block.strip() + "\n\n" + explanation
+                return code_block.strip()
+        
         # If AI echoed the prompt with "Output:" or similar markers
-        markers = ["Output:", "Result:", "Improved text:", "Final text:", "Response:"]
+        markers = ["Output:", "Result:", "Improved text:", "Final text:", "Response:", "Here's", "Here is"]
         for marker in markers:
             if marker in text:
                 # Take everything after the last occurrence of the marker
@@ -119,17 +140,21 @@ class LLMRunner:
         
         for line in lines:
             line_lower = line.lower().strip()
-            # Skip lines that look like prompt instructions
-            if any(phrase in line_lower for phrase in [
+            # Skip lines that look like prompt instructions or meta-text
+            skip_phrases = [
                 "you are helping", "context:", "tone:", "task:", "input text:", 
-                "provide only", "output only", "return only", "formality:"
-            ]):
+                "provide only", "output only", "return only", "formality:",
+                "concise coding solution", "summarize your previous", "provide a concise"
+            ]
+            
+            if any(phrase in line_lower for phrase in skip_phrases):
                 skip_mode = True
                 continue
+            
             # Reset skip mode when we see actual content
             if line.strip() and not skip_mode:
                 cleaned_lines.append(line)
-            elif skip_mode and line.strip() and line_lower[0].isalnum():
+            elif skip_mode and line.strip() and (line_lower[0].isalnum() or line.startswith("def ") or line.startswith("class ")):
                 # Looks like actual content starting
                 skip_mode = False
                 cleaned_lines.append(line)

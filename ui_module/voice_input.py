@@ -60,6 +60,7 @@ class VoiceInputHandler:
             return
         
         if self.is_recording:
+            print("⚠️ Already recording, ignoring start request")
             return  # Already recording
         
         if not PYAUDIO_AVAILABLE:
@@ -127,62 +128,86 @@ class VoiceInputHandler:
         
         self.is_recording = False
         
-        # Wait for recording thread to finish
-        if hasattr(self, 'recording_thread'):
-            self.recording_thread.join(timeout=1.0)
-        
-        # Stop stream
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-        if self.audio:
-            self.audio.terminate()
-        
-        # Check if we have audio data
-        if not self.audio_frames or len(self.audio_frames) == 0:
-            print("⚠️ No audio data recorded. Please try again.")
-            return "[No audio recorded]"
-        
-        # Calculate audio duration
-        audio_duration = (len(self.audio_frames) * self.chunk) / self.rate
-        print(f"🎤 Audio duration: {audio_duration:.2f} seconds")
-        
-        # Check minimum duration (0.5 seconds)
-        if audio_duration < 0.5:
-            print(f"⚠️ Audio too short ({audio_duration:.2f}s). Please speak for at least 0.5 seconds.")
-            return "[Audio too short]"
-        
-        # Save audio to temporary file
-        temp_wav = tempfile.mktemp(suffix=".wav")
-        
         try:
-            # Write audio to WAV file
-            wf = wave.open(temp_wav, 'wb')
-            wf.setnchannels(self.channels)
-            wf.setsampwidth(self.audio.get_sample_size(self.format) if self.audio else 2)
-            wf.setframerate(self.rate)
-            wf.writeframes(b''.join(self.audio_frames))
-            wf.close()
+            # Wait for recording thread to finish
+            if hasattr(self, 'recording_thread'):
+                self.recording_thread.join(timeout=1.0)
             
-            # Transcribe using speech recognition (offline)
-            transcribed_text = self._transcribe_audio(temp_wav)
+            # Stop stream
+            if self.stream:
+                try:
+                    self.stream.stop_stream()
+                    self.stream.close()
+                except:
+                    pass
+                self.stream = None
             
-            print(f"🎤 Voice transcribed: '{transcribed_text}'")
+            if self.audio:
+                try:
+                    self.audio.terminate()
+                except:
+                    pass
+                self.audio = None
             
-            # Cleanup
-            if os.path.exists(temp_wav):
-                os.remove(temp_wav)
+            # Check if we have audio data
+            if not self.audio_frames or len(self.audio_frames) == 0:
+                print("⚠️ No audio data recorded. Please try again.")
+                self.audio_frames = []
+                return "[No audio recorded]"
             
-            if callback:
-                callback(transcribed_text)
+            # Calculate audio duration
+            audio_duration = (len(self.audio_frames) * self.chunk) / self.rate
+            print(f"🎤 Audio duration: {audio_duration:.2f} seconds")
             
-            return transcribed_text
+            # Check minimum duration (0.5 seconds)
+            if audio_duration < 0.5:
+                print(f"⚠️ Audio too short ({audio_duration:.2f}s). Please speak for at least 0.5 seconds.")
+                self.audio_frames = []
+                return "[Audio too short]"
             
+            # Save audio to temporary file
+            temp_wav = tempfile.mktemp(suffix=".wav")
+            
+            try:
+                # Write audio to WAV file
+                wf = wave.open(temp_wav, 'wb')
+                wf.setnchannels(self.channels)
+                # Use fixed sample width (2 bytes = 16-bit) since audio is already terminated
+                wf.setsampwidth(2)
+                wf.setframerate(self.rate)
+                wf.writeframes(b''.join(self.audio_frames))
+                wf.close()
+                
+                # Transcribe using speech recognition (offline)
+                transcribed_text = self._transcribe_audio(temp_wav)
+                
+                print(f"🎤 Voice transcribed: '{transcribed_text}'")
+                
+                # Cleanup
+                if os.path.exists(temp_wav):
+                    os.remove(temp_wav)
+                
+                if callback:
+                    callback(transcribed_text)
+                
+                return transcribed_text
+            
+            except Exception as e:
+                print(f"❌ Error processing audio: {e}")
+                if os.path.exists(temp_wav):
+                    os.remove(temp_wav)
+                return "[Transcription error]"
+        
         except Exception as e:
-            print(f"❌ Error transcribing audio: {e}")
-            if os.path.exists(temp_wav):
-                os.remove(temp_wav)
-            return ""
+            print(f"❌ Error in stop_recording_and_transcribe: {e}")
+            import traceback
+            traceback.print_exc()
+            return "[Error]"
+        
+        finally:
+            # Always cleanup resources
+            self.audio_frames = []
+            self.is_recording = False
     
     def _transcribe_audio(self, audio_file: str) -> str:
         """
@@ -274,6 +299,6 @@ class VoiceInputHandler:
             print("🎤 Voice recording cancelled")
 
 
-# Singleton instance with BASE model (stable, 140MB)
+# Singleton instance with MEDIUM model (better accuracy, 1.5GB)
 # Models: tiny (39MB), base (140MB), small (470MB), medium (1.5GB), large (3GB)
-voice_handler = VoiceInputHandler(mock_mode=False, model_size="base")
+voice_handler = VoiceInputHandler(mock_mode=False, model_size="medium")

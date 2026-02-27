@@ -34,9 +34,30 @@ Keep emails clear, formal, and concise (3-5 sentences max).""",
             "Follow language-specific conventions",
             "Add docstrings and comments"
         ],
-        "ai_instructions": """You are a coding assistant helping developers.
-Provide clear, correct code with proper comments. Follow best practices and
-language conventions. Suggest efficient solutions. Be concise but complete.""",
+        "ai_instructions": """Generate working code immediately. No explanations without code.
+
+For code requests (sort, search, function, class, API, etc.):
+- Write complete, runnable code with comments
+- Use proper syntax and best practices
+- Add brief explanation AFTER code (2-3 lines max)
+
+Example: User says 'quick sort'
+Output ONLY this:
+
+```python
+def quick_sort(arr):
+    if len(arr) <= 1:
+        return arr
+    pivot = arr[len(arr) // 2]
+    left = [x for x in arr if x < pivot]
+    middle = [x for x in arr if x == pivot]
+    right = [x for x in arr if x > pivot]
+    return quick_sort(left) + middle + quick_sort(right)
+
+# Example: quick_sort([3,1,4,1,5]) returns [1,1,3,4,5]
+```
+
+Divides array around pivot, recursively sorts. O(n log n) average.""",
         "example_transformations": {
             "function for sorting": "def sort_items(items: list) -> list:\n    \"\"\"\n    Sort items in ascending order.\n    \n    Args:\n        items: List of comparable items\n    \n    Returns:\n        Sorted list\n    \"\"\"\n    return sorted(items)",
             "add error handling": "try:\n    # Your code here\n    pass\nexcept Exception as e:\n    logging.error(f'Error: {e}')\n    raise",
@@ -168,6 +189,16 @@ def format_ai_prompt(user_text: str, action: str, context: str) -> str:
     """
     persona = get_persona_for_context(context)
     instructions = persona["ai_instructions"]
+    
+    # Special handling for code context with expand action
+    if context == "code" and action == "expand":
+        # User is asking for code generation
+        prompt = f"""Generate working code for this request:
+
+{user_text}
+
+Output the complete, runnable code with comments. No explanations before the code."""
+        return prompt
     
     # Action-specific tasks
     if action == "expand":
