@@ -26,8 +26,8 @@ class PromptBuilder:
             "strategy": "Extract main ideas, remove redundancy, maintain essential information. Be brief but complete."
         },
         "autocomplete": {
-            "instruction": "Provide a natural and contextually appropriate continuation for the following incomplete text.",
-            "strategy": "Continue the thought logically, match the tone and style, keep it relevant to the context."
+            "instruction": "Complete the text with a SHORT, direct continuation (5-15 words max). NO quotes, NO explanations.",
+            "strategy": "Like VS Code Copilot: natural inline completion that flows from the typed text. Simple, concise, unquoted."
         }
     }
     
@@ -39,7 +39,19 @@ class PromptBuilder:
         style = request.context.user_style
         previous_text = request.context.previous_text
         
-        # Get template for this intent
+        # Special ultra-minimal prompt for autocomplete (VS Code style)
+        if intent == "autocomplete":
+            return f"""Complete this text naturally and concisely (5-10 words max). Write as if you're continuing the sentence.
+
+Examples:
+- "what is" → "the meaning of life"
+- "how to" → "bake a chocolate cake"
+- "define human" → "being or member of homo sapiens"
+
+Text: {original_text}
+Completion:"""
+        
+        # Get template for other intents
         template = PromptBuilder.PROMPT_TEMPLATES.get(intent, PromptBuilder.PROMPT_TEMPLATES["rewrite"])
         
         # Build context-aware prompt

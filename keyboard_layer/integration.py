@@ -76,6 +76,7 @@ class KeyboardService(QObject):
         self.keyboard_monitor.on_voice_key = self._handle_voice_key
         self.keyboard_monitor.on_accept_key = self._handle_accept_suggestion
         self.keyboard_monitor.on_reject_key = self._handle_reject_suggestion
+        # VS Code behavior: Dismiss ghost text on any keystroke
         self.keyboard_monitor.on_text_change = self._handle_text_change
         
     def start(self):
@@ -102,12 +103,14 @@ class KeyboardService(QObject):
         
         self.is_running = True
         
+        from keyboard_layer.config import ACTION_KEY, VOICE_KEY, ACCEPT_KEY, REJECT_KEY
+        
         print("\n" + "=" * 60)
         print("HOTKEYS:")
-        print("  F12          - Request AI suggestion")
-        print("  Ctrl+Shift+V - Voice input (push-to-talk)")
-        print("  Tab          - Accept ghost text suggestion")
-        print("  Esc          - Reject ghost text suggestion")
+        print(f"  {ACTION_KEY.upper()}          - Request AI suggestion")
+        print(f"  {VOICE_KEY}  - Voice input (push-to-talk)")
+        print(f"  {ACCEPT_KEY.capitalize()}          - Accept ghost text suggestion")
+        print(f"  {REJECT_KEY.capitalize()}          - Reject ghost text suggestion")
         print("=" * 60)
         print("\n✅ Service running! Start typing in any app...")
         print("   Press Ctrl+C to stop\n")
@@ -127,11 +130,11 @@ class KeyboardService(QObject):
         
     def _handle_action_key(self, context: str):
         """
-        Handle F12 - Request AI suggestion.
-        ONLY works with selected text - replaces selection with AI response.
+        Handle F9 - Show inline ghost text suggestion (VS Code-style).
+        Works with selected text OR typed text from buffer.
         
         Args:
-            context: Current text buffer (ignored - only selected text is used)
+            context: Current text buffer
         """
         # Debounce: ignore if request already in progress
         current_time = time.time()
@@ -145,27 +148,29 @@ class KeyboardService(QObject):
             return
         
         if DEBUG_MODE:
-            print(f"\n🎯 Action key pressed!")
+            print(f"\n🎯 Action key (F9) pressed!")
         
         # Get active window
         window, app = self.text_manager.get_active_window_info()
         
-        # Get selected text - REQUIRED
+        # Try to get selected text first
         selected = self.text_manager.get_selected_text()
         
-        # Only process if text is selected
-        if not selected or len(selected) < 2:
-            print("⚠️ No text selected! Select text first, then press F12.")
+        # Use selected text OR buffer text
+        text_for_ai = selected if selected and len(selected) >= 2 else context
+        
+        if not text_for_ai or len(text_for_ai) < 2:
+            print("⚠️ No text available! Type or select text first, then press F9.")
             return
         
-        print(f"\n🤖 Sending to AI: '{selected[:50]}...'")
+        print(f"\n👻 Requesting ghost text for: '{text_for_ai[:50]}'...")
         
         # Mark request as in progress
         self.request_in_progress = True
         self.last_request_time = current_time
         
-        # Emit signal for thread-safe UI update
-        self.ai_request_signal.emit(selected, "autocomplete", app or "general")
+        # Emit signal for GHOST TEXT (not immediate replace)
+        self.ghost_text_signal.emit(text_for_ai, "autocomplete", app or "general")
         
     def _handle_voice_key(self):
         """Handle Ctrl+Shift+V - Voice input"""
@@ -196,34 +201,35 @@ class KeyboardService(QObject):
     
     def _handle_text_change(self, text: str):
         """
-        Handle automatic AI suggestion on text change (debounced).
-        Shows GHOST TEXT that can be accepted with Tab.
+        VS Code behavior: Auto-dismiss ghost text on ANY typing.
+        This implements the instant-dismiss behavior of VS Code ghost suggestions.
         
         Args:
-            text: Current text buffer
+            text: Current text buffer (updated)
         """
-        if DEBUG_MODE:
-            print(f"\n📝 Text changed: '{text}'")
-        
-        # Get active app
-        _, app = self.text_manager.get_active_window_info()
-        
-        print(f"👻 Ghost text triggered for app: {app}, text: '{text[:30]}...'")
-        
-        # Emit signal for thread-safe ghost text display
-        self.ghost_text_signal.emit(text, "autocomplete", app or "general")
-        
-        # Mark suggestion as active
-        self.keyboard_monitor.set_suggestion_active(True)
+        # If ghost text is showing, dismiss it immediately
+        if self.keyboard_monitor.suggestion_active:
+            if DEBUG_MODE:
+                print(f"\n📝 User typed - auto-dismissing ghost text (VS Code behavior)")
+            
+            # Dismiss ghost overlay
+            self.ui_controller.reject_suggestion()
+            
+            # Mark as inactive
+            self.keyboard_monitor.set_suggestion_active(False)
+            self.current_suggestion = None
     
     # === Signal Handlers (Qt thread-safe) ===
     
     def _process_ghost_text_request(self, text: str, action: str, app: str):
-        """Process ghost text request in Qt thread - displays as overlay"""
+        """Process ghost text request in Qt thread - displays as inline ghost overlay"""
         print(f"👻 Ghost text request for: '{text[:50]}...'")
         
         # Request AI suggestion (will show as ghost text overlay)
         self.ui_controller.request_ai_suggestion(text, action, app)
+        
+        # Mark suggestion as active (for auto-dismiss detection)
+        self.keyboard_monitor.set_suggestion_active(True)
     
     def _process_ai_request(self, text: str, action: str, app: str):
         """Process AI request in Qt thread - FOR F12 REPLACE ACTION ONLY"""

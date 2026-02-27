@@ -1,0 +1,14 @@
+# Cross-Application AI Text Rewriter - Requirements
+# Simple clipboard-based AI text rewriting system
+# Works across all applications (browser, Word, VS Code, etc.)
+
+# Core dependencies
+pyperclip>=1.8.2      # Clipboard management
+pynput>=1.7.6         # Global keyboard hotkey detection  
+pyautogui>=0.9.54     # Keyboard shortcut simulation
+requests>=2.31.0      # AI service API calls
+
+# Optional: Only needed if running the full AI backend
+# fastapi>=0.104.1
+# uvicorn>=0.24.0
+# pydantic>=2.5.0

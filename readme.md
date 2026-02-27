@@ -221,3 +221,7 @@ Enhanced templates in [`prompt_builder.py`](ai_engine/prompt_builder.py) for all
 - Reduced timeouts (15s instead of 30s)
 - Token limits: 150 for autocomplete, 500 for complex tasks
 - Temperature and top_p tuning for quality/speed balance
+
+what is inertia
+bubb
+insertion sort code

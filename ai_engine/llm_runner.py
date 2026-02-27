@@ -72,9 +72,9 @@ class LLMRunner:
             "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": 0.7,  # Balanced creativity
+                "temperature": 0.3 if action == "autocomplete" else 0.7,  # Low temp for focused completions
                 "top_p": 0.9,
-                "num_predict": 150 if action == "autocomplete" else 500  # Limit tokens for speed
+                "num_predict": 30 if action == "autocomplete" else 500  # Very short for VS Code style
             }
         }
         try:

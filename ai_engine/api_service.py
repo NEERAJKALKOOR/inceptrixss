@@ -30,10 +30,25 @@ def process_text(request: ProcessTextRequest):
         # Request dict needed for mock mode logic
         result_text, confidence, latency_ms = llm_runner.generate(prompt, request.model_dump())
         
-        # 5. Store interaction for iterative refinement
+        # 5. Post-process autocomplete: strip quotes, keep it clean for VS Code style
+        if intent == "autocomplete":
+            result_text = result_text.strip()
+            # Remove quotes if present
+            if result_text.startswith('"') and result_text.endswith('"'):
+                result_text = result_text[1:-1]
+            if result_text.startswith("'") and result_text.endswith("'"):
+                result_text = result_text[1:-1]
+            # Take only first sentence/line for inline style
+            if '.' in result_text:
+                result_text = result_text.split('.')[0]
+            if '\n' in result_text:
+                result_text = result_text.split('\n')[0]
+            result_text = result_text.strip()
+        
+        # 6. Store interaction for iterative refinement
         context_manager.add_interaction(request.app, request.text, result_text)
         
-        # 6. Return Structured Output
+        # 7. Return Structured Output
         output = ProcessTextResponse(
             api_version=request.api_version,
             result_text=result_text,

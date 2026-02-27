@@ -169,35 +169,32 @@ class KeyboardMonitor:
             self.text_buffer += key.char
             self.last_keystroke_time = time.time()
             
-            # Debounce: trigger AI after user stops typing
-            if self.debounce_timer:
-                self.debounce_timer.cancel()
-            
-            self.debounce_timer = threading.Timer(
-                DEBOUNCE_TIME,
-                self._trigger_text_change
-            )
-            self.debounce_timer.start()
+            # VS Code behavior: Dismiss ghost on ANY typing (no debounce)
+            if self.on_text_change:
+                self.on_text_change(self.text_buffer)
         
         # Handle special keys
         elif key == Key.space:
             self.text_buffer += " "
             self.last_keystroke_time = time.time()
+            # Dismiss ghost on space
+            if self.on_text_change:
+                self.on_text_change(self.text_buffer)
         
         elif key == Key.backspace:
             if self.text_buffer:
                 self.text_buffer = self.text_buffer[:-1]
             self.last_keystroke_time = time.time()
+            # Dismiss ghost on backspace
+            if self.on_text_change:
+                self.on_text_change(self.text_buffer)
         
         elif key == Key.enter:
             self.text_buffer = ""  # Reset on new line
             self.last_keystroke_time = time.time()
-    
-    def _trigger_text_change(self):
-        """Trigger AI suggestion after debounce period"""
-        if len(self.text_buffer) >= MIN_TEXT_LENGTH:
+            # Dismiss ghost on enter
             if self.on_text_change:
-                self.on_text_change(self.text_buffer)
+                self.on_text_change("")
     
     def clear_buffer(self):
         """Clear the text buffer"""
