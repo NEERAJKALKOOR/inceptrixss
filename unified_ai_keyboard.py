@@ -10,6 +10,7 @@ import sys
 import time
 import threading
 import pyperclip
+import pyautogui
 from pynput import keyboard
 from pynput.keyboard import Key, Controller
 
@@ -18,6 +19,7 @@ try:
     from PyQt5.QtWidgets import QApplication
     from PyQt5.QtCore import QTimer, QObject, pyqtSignal
     from popup_suggestion_window import SuggestionPopup
+    from recording_status_popup import RecordingStatusPopup
     PYQT_AVAILABLE = True
 except ImportError:
     PYQT_AVAILABLE = False
@@ -48,6 +50,9 @@ class AIKeyboardController(QObject):
     # Qt signals for thread-safe UI updates
     show_popup_signal = pyqtSignal(str, float)
     hide_popup_signal = pyqtSignal()
+    show_recording_signal = pyqtSignal()
+    show_stopped_signal = pyqtSignal()
+    show_processing_signal = pyqtSignal()
     
     def __init__(self):
         super().__init__()
@@ -71,8 +76,9 @@ class AIKeyboardController(QObject):
         else:
             print("⚠️ Voice module not available - install requirements_ui.txt")
         
-        # Popup window
+        # Popup windows
         self.popup = None
+        self.recording_popup = None
         self.pending_paste_text = ""  # Text waiting to be pasted on Tab
         
         # Initialize Qt application (must be in main thread)
@@ -92,9 +98,15 @@ class AIKeyboardController(QObject):
         self.popup.suggestion_accepted.connect(self.on_suggestion_accepted)
         self.popup.suggestion_rejected.connect(self.on_suggestion_rejected)
         
+        # Recording status popup
+        self.recording_popup = RecordingStatusPopup()
+        
         # Connect signals
         self.show_popup_signal.connect(self._show_popup_slot)
         self.hide_popup_signal.connect(self._hide_popup_slot)
+        self.show_recording_signal.connect(self._show_recording_slot)
+        self.show_stopped_signal.connect(self._show_stopped_slot)
+        self.show_processing_signal.connect(self._show_processing_slot)
         
     def _show_popup_slot(self, text: str, confidence: float):
         """Qt slot to show popup (thread-safe)"""
@@ -113,6 +125,30 @@ class AIKeyboardController(QObject):
                 self.popup.hide_popup()
             except Exception as e:
                 print(f"    ⚠️ Hide popup error: {e}")
+    
+    def _show_recording_slot(self):
+        """Qt slot to show recording status (thread-safe)"""
+        if self.recording_popup:
+            try:
+                self.recording_popup.show_recording()
+            except Exception as e:
+                print(f"    ⚠️ Recording popup error: {e}")
+    
+    def _show_stopped_slot(self):
+        """Qt slot to show stopped recording status (thread-safe)"""
+        if self.recording_popup:
+            try:
+                self.recording_popup.show_stopped()
+            except Exception as e:
+                print(f"    ⚠️ Stopped popup error: {e}")
+    
+    def _show_processing_slot(self):
+        """Qt slot to show processing status (thread-safe)"""
+        if self.recording_popup:
+            try:
+                self.recording_popup.show_processing()
+            except Exception as e:
+                print(f"    ⚠️ Processing popup error: {e}")
         
     def on_suggestion_accepted(self, text: str):
         """Handle suggestion acceptance (Tab pressed)"""
@@ -247,6 +283,9 @@ class AIKeyboardController(QObject):
                     voice_handler.start_recording()
                     time.sleep(0.2)  # Give it a moment to start
                     print(f"✅ Microphone active - is_recording={voice_handler.is_recording}")
+                    
+                    # Show recording popup
+                    self.show_recording_signal.emit()
                 except Exception as e:
                     print(f"❌ Error starting recording: {e}")
                     print("   💡 Check microphone permissions and try again")
@@ -391,6 +430,10 @@ class AIKeyboardController(QObject):
             # Stop recording and transcribe using singleton voice_handler
             if VOICE_AVAILABLE and voice_handler and not voice_handler.mock_mode:
                 print("🔄 Processing audio with Whisper AI...")
+                
+                # Show processing popup
+                self.show_processing_signal.emit()
+                
                 transcribed = voice_handler.stop_recording_and_transcribe()
                 print(f"🔍 DEBUG: Transcription result = '{transcribed}'")
                 
@@ -409,21 +452,42 @@ class AIKeyboardController(QObject):
             
             # Now paste to replace selected text
             print("📝 Replacing selected text with transcription...")
-            time.sleep(0.3)
+            
+            # Hide all popups FIRST to ensure focus returns to target app
+            if self.recording_popup:
+                try:
+                    self.recording_popup.hide()
+                except:
+                    pass
+            
+            # Give time for focus to return and clipboard to be ready
+            time.sleep(0.8)
+            
+            # Click to restore focus to target window
+            try:
+                print("📍 Clicking to restore focus...")
+                pyautogui.click()
+                time.sleep(0.2)
+            except Exception as e:
+                print(f"⚠️ Could not click: {e}")
             
             # Save original clipboard
             original_clip = pyperclip.paste()
             
             # Copy transcribed text to clipboard
             pyperclip.copy(transcribed)
-            time.sleep(0.2)
+            time.sleep(0.3)
             
-            # Paste to replace selection
+            # Paste to replace selection - send Ctrl+V
+            print("⏬ Sending Ctrl+V to paste...")
             self.send_ctrl_v()
-            time.sleep(0.2)
+            time.sleep(0.3)
             
             # Restore clipboard
             pyperclip.copy(original_clip)
+            
+            # NOW show success popup after paste is complete
+            self.show_stopped_signal.emit()
             
             print("\n" + "="*70)
             print("✅ ✅ ✅  Voice text pasted! Check your app!")

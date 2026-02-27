@@ -42,7 +42,7 @@ class VoiceInputHandler:
         self.model = None
         self.model_size = model_size  # tiny, base, small, medium, large (tiny=39MB, base=140MB)
         
-        # Audio settings
+        # Audio settings - optimized for speech
         self.chunk = 1024
         self.format = pyaudio.paInt16 if PYAUDIO_AVAILABLE else None
         self.channels = 1
@@ -50,6 +50,7 @@ class VoiceInputHandler:
         
         self.audio = None
         self.stream = None
+        self.input_device_index = None  # Let PyAudio choose default
         
     def start_recording(self):
         """Start capturing microphone input (push-to-talk pressed)"""
@@ -137,6 +138,20 @@ class VoiceInputHandler:
         if self.audio:
             self.audio.terminate()
         
+        # Check if we have audio data
+        if not self.audio_frames or len(self.audio_frames) == 0:
+            print("⚠️ No audio data recorded. Please try again.")
+            return "[No audio recorded]"
+        
+        # Calculate audio duration
+        audio_duration = (len(self.audio_frames) * self.chunk) / self.rate
+        print(f"🎤 Audio duration: {audio_duration:.2f} seconds")
+        
+        # Check minimum duration (0.5 seconds)
+        if audio_duration < 0.5:
+            print(f"⚠️ Audio too short ({audio_duration:.2f}s). Please speak for at least 0.5 seconds.")
+            return "[Audio too short]"
+        
         # Save audio to temporary file
         temp_wav = tempfile.mktemp(suffix=".wav")
         
@@ -181,21 +196,68 @@ class VoiceInputHandler:
             # Load model on first use (lazy loading)
             if self.model is None:
                 print(f"🔄 Loading Whisper {self.model_size} model (one-time setup)...")
-                self.model = whisper.load_model(self.model_size)
-                print(f"✅ Whisper model loaded successfully")
+                try:
+                    self.model = whisper.load_model(self.model_size)
+                    print(f"✅ Whisper model loaded successfully")
+                except Exception as load_error:
+                    print(f"⚠️ Error loading {self.model_size} model: {load_error}")
+                    print(f"🔄 Falling back to 'base' model...")
+                    self.model_size = 'base'
+                    self.model = whisper.load_model('base')
+                    print(f"✅ Base model loaded successfully")
+            
+            # Check audio file size
+            file_size = os.path.getsize(audio_file)
+            print(f"📊 Audio file size: {file_size} bytes")
+            
+            if file_size < 1000:  # Less than 1KB is probably empty
+                print("⚠️ Audio file too small. Recording may be empty.")
+                return "[Recording too short or empty]"
             
             # Transcribe audio (requires ffmpeg)
-            result = self.model.transcribe(audio_file, fp16=False)
+            # Force English language and use simple parameters
+            print(f"🔄 Transcribing with Whisper {self.model_size} model...")
+            result = self.model.transcribe(
+                audio_file,
+                language='en',  # FORCE English instead of auto-detect
+                fp16=False,
+                verbose=True  # Show detailed processing
+            )
+            
+            # Debug: Show full result
+            print(f"📊 Whisper result keys: {result.keys()}")
+            print(f"📊 Raw text: '{result.get('text', '')}'")
+            print(f"📊 Language detected: {result.get('language', 'unknown')}")
+            
+            # Check segments for more detail
+            if 'segments' in result and result['segments']:
+                print(f"📊 Number of segments: {len(result['segments'])}")
+                for i, seg in enumerate(result['segments'][:3]):
+                    print(f"   Segment {i}: '{seg.get('text', '')}' (no_speech_prob: {seg.get('no_speech_prob', 0):.2f})")
+            
             text = result["text"].strip()
             
             if not text:
-                return "[Could not understand audio]"
+                print("⚠️ Whisper returned empty text. Possible causes:")
+                print("   • Microphone input level too low")
+                print("   • Background noise drowning out speech") 
+                print("   • Wrong audio device selected")
+                print("   • Try speaking louder and closer to the microphone")
+                return "[Could not understand audio - try speaking louder]"
             
             return text
                         
         except Exception as e:
+            error_msg = str(e)
             print(f"❌ Whisper transcription error: {e}")
-            return f"[Error: {str(e)}]"
+            
+            # Provide helpful error messages
+            if "key.size" in error_msg or "value.size" in error_msg:
+                print("💡 This error usually means the audio is too short or corrupted.")
+                print("   Try speaking for at least 1-2 seconds before stopping.")
+                return "[Audio too short - speak longer]"
+            else:
+                return f"[Error: {error_msg[:50]}]"
     
     def cancel_recording(self):
         """Cancel current recording without transcription"""
@@ -212,6 +274,6 @@ class VoiceInputHandler:
             print("🎤 Voice recording cancelled")
 
 
-# Singleton instance with MEDIUM model (high accuracy, 1.5GB)
+# Singleton instance with BASE model (stable, 140MB)
 # Models: tiny (39MB), base (140MB), small (470MB), medium (1.5GB), large (3GB)
-voice_handler = VoiceInputHandler(mock_mode=False, model_size="medium")
+voice_handler = VoiceInputHandler(mock_mode=False, model_size="base")
