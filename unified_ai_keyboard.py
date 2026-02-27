@@ -35,6 +35,20 @@ except ImportError:
     VOICE_AVAILABLE = False
     voice_handler = None
 
+# Import context detection and history management
+try:
+    from window_detector import window_detector, get_active_context
+    from context_personas import get_persona_for_context, format_ai_prompt
+    from suggestion_history import suggestion_history
+    CONTEXT_FEATURES_AVAILABLE = True
+    print("✅ Context detection & history enabled")
+except ImportError as e:
+    CONTEXT_FEATURES_AVAILABLE = False
+    window_detector = None
+    suggestion_history = None
+    print(f"⚠️ Context features not available: {e}")
+    print("   Install: pip install pywin32 psutil")
+
 
 # Configuration
 MOCK_MODE = False  # Set to True for mock mode (no AI required)
@@ -80,6 +94,11 @@ class AIKeyboardController(QObject):
         self.popup = None
         self.recording_popup = None
         self.pending_paste_text = ""  # Text waiting to be pasted on Tab
+        
+        # Context detection and history
+        self.current_context = "general"  # Detected app context
+        self.current_app_name = "unknown"  # App name
+        self.last_original_text = ""  # Store for history
         
         # Initialize Qt application (must be in main thread)
         self.app = None
@@ -155,10 +174,60 @@ class AIKeyboardController(QObject):
         print(f"\n✅ Suggestion accepted: '{text[:50]}...'")
         self.paste_text(text)
         
+        # Mark in history as accepted
+        if CONTEXT_FEATURES_AVAILABLE and suggestion_history:
+            suggestion_history.mark_accepted(True)
+        
     def on_suggestion_rejected(self):
         """Handle suggestion rejection (Esc pressed)"""
         print("\n❌ Suggestion rejected")
         self.pending_paste_text = ""
+        
+        # Mark in history as rejected
+        if CONTEXT_FEATURES_AVAILABLE and suggestion_history:
+            suggestion_history.mark_accepted(False)
+    
+    def show_previous_suggestion(self):
+        """Navigate to previous suggestion in history (Ctrl+Shift+Up)"""
+        if not CONTEXT_FEATURES_AVAILABLE or not suggestion_history:
+            print("⚠️ History feature not available")
+            return
+        
+        previous = suggestion_history.get_previous()
+        
+        if previous:
+            print(f"\n⬅️  Previous suggestion:")
+            print(f"   Original: '{previous['original_text'][:40]}...'")
+            print(f"   Context: {previous['context']}")
+            print(f"   Action: {previous['action']}")
+            print(f"   💡 Showing in popup - Press Tab to use")
+            
+            # Show in popup
+            self.pending_paste_text = previous['suggestion']
+            self.show_popup_signal.emit(previous['suggestion'], 0.75)
+        else:
+            print("⬅️  Already at oldest suggestion")
+    
+    def show_next_suggestion(self):
+        """Navigate to next suggestion in history (Ctrl+Shift+Down)"""
+        if not CONTEXT_FEATURES_AVAILABLE or not suggestion_history:
+            print("⚠️ History feature not available")
+            return
+        
+        next_item = suggestion_history.get_next()
+        
+        if next_item:
+            print(f"\n➡️  Next suggestion:")
+            print(f"   Original: '{next_item['original_text'][:40]}...'")
+            print(f"   Context: {next_item['context']}")
+            print(f"   Action: {next_item['action']}")
+            print(f"   💡 Showing in popup - Press Tab to use")
+            
+            # Show in popup
+            self.pending_paste_text = next_item['suggestion']
+            self.show_popup_signal.emit(next_item['suggestion'], 0.75)
+        else:
+            print("➡️  Back to current suggestion / No more in history")
         
     def on_press(self, key):
         """Handle key press events"""
@@ -209,6 +278,24 @@ class AIKeyboardController(QObject):
             print(f"\n❌ Esc pressed - Rejecting suggestion")
             self.pending_paste_text = ""
             self.hide_popup_signal.emit()
+        
+        # === NEW: Ctrl+Shift+Up - Previous suggestion from history ===
+        elif (Key.ctrl_l in self.current_keys or Key.ctrl_r in self.current_keys) and \
+             (Key.shift in self.current_keys or Key.shift_l in self.current_keys or Key.shift_r in self.current_keys) and \
+             key == Key.up:
+            if CONTEXT_FEATURES_AVAILABLE and suggestion_history:
+                self.show_previous_suggestion()
+                self.current_keys.clear()
+                return False  # Suppress arrow key
+        
+        # === NEW: Ctrl+Shift+Down - Next suggestion from history ===
+        elif (Key.ctrl_l in self.current_keys or Key.ctrl_r in self.current_keys) and \
+             (Key.shift in self.current_keys or Key.shift_l in self.current_keys or Key.shift_r in self.current_keys) and \
+             key == Key.down:
+            if CONTEXT_FEATURES_AVAILABLE and suggestion_history:
+                self.show_next_suggestion()
+                self.current_keys.clear()
+                return False  # Suppress arrow key
             return False  # Suppress Esc key
             
         # === Ctrl+Esc - Exit program ===
@@ -355,6 +442,16 @@ class AIKeyboardController(QObject):
         try:
             time.sleep(0.3)
             
+            # NEW: Detect context from active window
+            if CONTEXT_FEATURES_AVAILABLE and window_detector:
+                window_info = window_detector.get_active_window_info()
+                self.current_context = window_info['context']
+                self.current_app_name = window_info['process']
+                print(f"🎯 Context detected: {self.current_context} ({self.current_app_name})")
+            else:
+                self.current_context = "general"
+                self.current_app_name = "unknown"
+            
             # Step 1: Save original clipboard
             print("1️⃣  Saving clipboard...")
             original_clip = pyperclip.paste()
@@ -373,21 +470,32 @@ class AIKeyboardController(QObject):
                 copied = ""
             else:
                 print(f"    ✅ Copied: '{copied[:40]}...'")
+                self.last_original_text = copied  # Store for history
             
             # Step 3: Send to AI (treat as QUESTION/PROMPT → get ANSWER)
-            print("3️⃣  Asking AI about your selection...")
+            print(f"3️⃣  Asking AI about your selection... (context: {self.current_context})")
             
             # Build a direct prompt for the AI
             if not copied:
                 ai_result = "Please select some text and press Ctrl+Space!"
             else:
-                # Call AI with custom prompt for direct answers
+                # Call AI with context-aware prompt
                 if MOCK_MODE:
-                    ai_result = self.mock_ai(copied, action="answer")
+                    ai_result = self.mock_ai(copied, action="answer", context=self.current_context)
                 else:
-                    # For real AI, construct a direct question/answer prompt
-                    prompt_text = f"Answer this question or explain this topic in 2-3 sentences: {copied}"
-                    ai_result = self.call_ai(prompt_text, action="expand")
+                    # For real AI, use context-aware prompt
+                    ai_result = self.call_ai(copied, action="expand", context=self.current_context)
+                
+                # Store in history
+                if CONTEXT_FEATURES_AVAILABLE and suggestion_history:
+                    suggestion_history.add(
+                        suggestion=ai_result,
+                        context=self.current_context,
+                        action="expand",
+                        original_text=copied
+                    )
+                    stats = suggestion_history.get_stats()
+                    print(f"    📜 History: {stats['total']} total, {stats['acceptance_rate']:.0%} accepted")
                 
             print(f"    ✅ AI response: '{ai_result[:40]}...'")
             
@@ -525,20 +633,32 @@ class AIKeyboardController(QObject):
             import traceback
             traceback.print_exc()
     
-    def call_ai(self, text: str, action: str = "expand") -> str:
-        """Call AI engine (mock or real)"""
+    def call_ai(self, text: str, action: str = "expand", context: str = "general") -> str:
+        """Call AI engine (mock or real) with context awareness"""
         if MOCK_MODE:
-            return self.mock_ai(text, action)
+            return self.mock_ai(text, action, context)
+        
+        # Get context-aware persona
+        if CONTEXT_FEATURES_AVAILABLE:
+            persona = get_persona_for_context(context)
+            print(f"    🎭 Using persona: {persona['name']}")
         
         # Real AI call
         import requests
         try:
-            print(f"    🤖 Calling local AI engine ({action} mode)...")
+            print(f"    🤖 Calling local AI engine ({action} mode, context: {context})...")
+            
+            # Build context-aware prompt if available
+            if CONTEXT_FEATURES_AVAILABLE:
+                enhanced_text = format_ai_prompt(text, action, context)
+            else:
+                enhanced_text = f"Answer this question or explain this topic in 2-3 sentences: {text}"
+            
             payload = {
-                "text": text,
+                "text": enhanced_text,
                 "action": action,
-                "app": "unified_keyboard",
-                "context": {"previous_text": "", "user_style": "default"},
+                "app": self.current_app_name,
+                "context": {"detected_context": context, "user_style": "default"},
                 "api_version": "v1"
             }
             
@@ -549,18 +669,18 @@ class AIKeyboardController(QObject):
                 return result.get("result_text", text)
             else:
                 print(f"    ⚠️ AI API error: {response.status_code}")
-                return self.mock_ai(text, action)
+                return self.mock_ai(text, action, context)
                 
         except requests.exceptions.ConnectionError:
             print(f"    ⚠️ Cannot connect to AI engine. Is it running?")
             print(f"    💡 Start it with: uvicorn ai_engine.api_service:app --reload")
-            return self.mock_ai(text, action)
+            return self.mock_ai(text, action, context)
         except Exception as e:
             print(f"    ⚠️ AI call failed: {e}")
-            return self.mock_ai(text, action)
+            return self.mock_ai(text, action, context)
     
-    def mock_ai(self, text: str, action: str = "expand") -> str:
-        """Mock AI for testing - treats text as question/prompt"""
+    def mock_ai(self, text: str, action: str = "expand", context: str = "general") -> str:
+        """Mock AI for testing - context-aware responses"""
         time.sleep(0.3)
         
         if not text:
@@ -568,22 +688,70 @@ class AIKeyboardController(QObject):
         
         text_lower = text.lower().strip()
         
-        # Answer based on selected text (treating it as a question/topic)
-        if "science" in text_lower:
+        # Context-aware transformations
+        if context == "email":
+            # Professional email style
+            if "hey" in text_lower or "hi" in text_lower:
+                return "Dear [Name],\n\nI hope this message finds you well."
+            elif "thx" in text_lower or "thanks" in text_lower:
+                return "Thank you for your time and consideration. I appreciate your prompt response."
+            elif "can we meet" in text_lower or "meeting" in text_lower:
+                return "Dear [Name],\n\nI hope this message finds you well. I would like to schedule a meeting at your earliest convenience. Please let me know your availability.\n\nBest regards"
+            else:
+                return f"Dear [Name],\n\n{text.capitalize()}. I look forward to your response.\n\nBest regards"
+        
+        elif context == "code":
+            # Code-related responses
+            if "function" in text_lower or "def" in text_lower:
+                return '''def process_data(data: list) -> dict:
+    """
+    Process input data and return results.
+    
+    Args:
+        data: Input data to process
+    
+    Returns:
+        Processed results as dictionary
+    """
+    result = {}
+    # Implementation here
+    return result'''
+            elif "class" in text_lower:
+                return '''class DataProcessor:
+    """Main data processing class."""
+    
+    def __init__(self):
+        self.data = []
+    
+    def process(self):
+        """Process the data."""
+        pass'''
+            else:
+                return f"# {text}\n# TODO: Implement this functionality\npass"
+        
+        elif context == "chat":
+            # Casual messaging style
+            if "okay" in text_lower or "ok" in text_lower:
+                return "sounds good! 👍"
+            elif "thank" in text_lower:
+                return "no problem! 😊"
+            elif "yes" in text_lower:
+                return "yeah definitely! ✅"
+            else:
+                return f"{text.lower()} 😊"
+        
+        elif context == "document":
+            # Formal document style
+            return f"{text.capitalize()}. This represents a significant consideration that warrants careful examination and thorough analysis. The implications of this matter extend across multiple dimensions and require comprehensive understanding."
+        
+        # General fallback - treat as question/topic
+        elif "science" in text_lower:
             return "Science is the systematic study of the natural world through observation, experimentation, and analysis. It encompasses physics, chemistry, biology, and many other disciplines that help us understand how the universe works."
-        elif "life" in text_lower:
-            return "Life is the condition that distinguishes living organisms from inorganic matter, characterized by growth, reproduction, functional activity, and continual change. It's a complex phenomenon that scientists continue to study and understand."
         elif "ai" in text_lower or "artificial intelligence" in text_lower:
             return "Artificial Intelligence (AI) is the simulation of human intelligence by machines, especially computer systems. It includes machine learning, natural language processing, and computer vision to enable computers to perform tasks that typically require human intelligence."
-        elif "python" in text_lower:
-            return "Python is a high-level, interpreted programming language created by Guido van Rossum. It's known for its simple, readable syntax and is widely used in web development, data science, automation, and artificial intelligence applications."
-        elif "hello" in text_lower or "hi" in text_lower:
-            return "Hello! I'm your AI assistant. I can help you with information, writing, and answering questions. Just select any text and press Ctrl+Space!"
         elif "?" in text:
-            # It's a question
             return f"That's a great question about '{text}'. The answer involves understanding key concepts and their practical applications. Let me explain it in simple terms for better clarity."
         else:
-            # Generic explanation for any topic
             return f"{text.capitalize()} is an important topic that encompasses various aspects and applications. It plays a significant role in its field and has multiple considerations to keep in mind."
     
     def send_ctrl_c(self):
@@ -656,6 +824,7 @@ class AIKeyboardController(QObject):
         print("       • Select text in any app")
         print("       • Press Ctrl+Space")
         print("       • AI response pastes directly (no popup)")
+        print("       • 🆕 Context-aware: Adapts tone based on app!")
         print()
         print("   3️⃣  Voice Input → Transcribe → Paste (with Popup)")
         print("       Hotkey: Ctrl + Shift + V")
@@ -663,7 +832,21 @@ class AIKeyboardController(QObject):
         print("       • Press again to stop & transcribe")
         print("       • Tab to paste transcribed text")
         print()
+        print("   🆕 4️⃣  Suggestion History Navigation")
+        print("       Hotkeys: Ctrl + Shift + ↑/↓")
+        print("       • Ctrl+Shift+Up: Previous suggestion")
+        print("       • Ctrl+Shift+Down: Next suggestion")
+        print("       • Stores last 10 AI suggestions")
+        print("       • Press Tab to reuse any suggestion")
+        print()
         print("⚙️  AI MODE:", "🧪 MOCK (for testing)" if MOCK_MODE else "🤖 REAL AI")
+        
+        # Show context detection status
+        if CONTEXT_FEATURES_AVAILABLE:
+            print("🎯 CONTEXT: ✅ Smart Detection Enabled")
+            print("   🔍 Auto-detects: Email, Code, Chat, Document, Browser, Notes")
+        else:
+            print("🎯 CONTEXT: ⚠️  Not available (install: pip install pywin32 psutil)")
         
         # Check actual voice_handler status
         if VOICE_AVAILABLE and voice_handler:

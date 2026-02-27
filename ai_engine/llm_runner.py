@@ -84,6 +84,10 @@ class LLMRunner:
             result = response.json()
             
             result_text = result.get("response", "").strip()
+            
+            # Clean up AI output - remove echoed prompt parts
+            result_text = self._clean_ai_output(result_text)
+            
             latency_ms = int((time.time() - start_time) * 1000)
             
             # Confidence based on response quality indicators
@@ -98,5 +102,47 @@ class LLMRunner:
             # Fallback in case Ollama is not running but mock mode is off
             latency_ms = int((time.time() - start_time) * 1000)
             return f"Error connecting to LLM: {str(e)}", 0.0, latency_ms
+    
+    def _clean_ai_output(self, text: str) -> str:
+        """Remove echoed prompt parts and extract only the final output"""
+        # If AI echoed the prompt with "Output:" or similar markers
+        markers = ["Output:", "Result:", "Improved text:", "Final text:", "Response:"]
+        for marker in markers:
+            if marker in text:
+                # Take everything after the last occurrence of the marker
+                text = text.split(marker)[-1].strip()
+        
+        # Remove any remaining prompt artifacts
+        lines = text.split('\n')
+        cleaned_lines = []
+        skip_mode = False
+        
+        for line in lines:
+            line_lower = line.lower().strip()
+            # Skip lines that look like prompt instructions
+            if any(phrase in line_lower for phrase in [
+                "you are helping", "context:", "tone:", "task:", "input text:", 
+                "provide only", "output only", "return only", "formality:"
+            ]):
+                skip_mode = True
+                continue
+            # Reset skip mode when we see actual content
+            if line.strip() and not skip_mode:
+                cleaned_lines.append(line)
+            elif skip_mode and line.strip() and line_lower[0].isalnum():
+                # Looks like actual content starting
+                skip_mode = False
+                cleaned_lines.append(line)
+        
+        # Join and clean
+        result = '\n'.join(cleaned_lines).strip()
+        
+        # Remove surrounding quotes if present
+        if result.startswith('"') and result.endswith('"'):
+            result = result[1:-1]
+        if result.startswith("'") and result.endswith("'"):
+            result = result[1:-1]
+        
+        return result.strip()
 
 llm_runner = LLMRunner()
