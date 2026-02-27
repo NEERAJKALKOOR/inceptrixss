@@ -4,8 +4,8 @@ Keyboard Layer Configuration
 import os
 
 # Hotkey Configuration
-ACTION_KEY = "f9"  # Trigger AI suggestion
-VOICE_KEY = "ctrl+shift+v"  # Push-to-talk voice input
+ACTION_KEY = "f9"  # Voice selection replacement (select text → F9 → record → F9 → replace)
+VOICE_KEY = "ctrl+shift+v"  # Push-to-talk voice input (with popup)
 ACCEPT_KEY = "tab"  # Accept AI suggestion (when ghost text visible)
 REJECT_KEY = "esc"  # Reject AI suggestion
 

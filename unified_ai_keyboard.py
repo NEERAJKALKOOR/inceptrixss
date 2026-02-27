@@ -57,6 +57,7 @@ class AIKeyboardController(QObject):
         
         # Voice recording
         self.is_recording_voice = False
+        self.is_recording_voice_f9 = False  # F9 voice recording state
         self.voice_text = ""
         self.voice_handler = None
         if VOICE_AVAILABLE and not VOICE_MOCK_MODE:
@@ -126,11 +127,17 @@ class AIKeyboardController(QObject):
         
         self.current_keys.add(key)
         
-        # === HOTKEY 1: Ctrl+Space - Text Selection → AI → Replace ===
-        if self.check_hotkey({Key.ctrl_l, Key.space}) or self.check_hotkey({Key.ctrl_r, Key.space}):
+        # === HOTKEY 1: F9 - Voice Selection → Transcribe → Replace ===
+        if key == Key.f9:
+            self.trigger_f9_voice_replacement()
+            self.current_keys.clear()
+            return
+        
+        # === HOTKEY 2: Ctrl+Space - Text Selection → AI → Replace ===
+        elif self.check_hotkey({Key.ctrl_l, Key.space}) or self.check_hotkey({Key.ctrl_r, Key.space}):
             self.trigger_text_ai_rewrite()
             
-        # === HOTKEY 2: Ctrl+Shift+V - Voice Input ===
+        # === HOTKEY 3: Ctrl+Shift+V - Voice Input ===
         # Check for KeyCode variants of 'v' and 'V'
         elif (Key.ctrl_l in self.current_keys or Key.ctrl_r in self.current_keys) and \
              (Key.shift in self.current_keys or Key.shift_l in self.current_keys or Key.shift_r in self.current_keys):
@@ -197,6 +204,49 @@ class AIKeyboardController(QObject):
         thread = threading.Thread(target=self._process_text_ai)
         thread.daemon = True
         thread.start()
+    
+    def trigger_f9_voice_replacement(self):
+        """NEW WORKFLOW: F9 → Voice → Replace selected text"""
+        print(f"\n🎤 F9 Voice triggered (recording: {self.is_recording_voice_f9})")
+        
+        if self.is_recording_voice_f9:
+            # Stop recording and transcribe, then replace
+            print("🔴 Stopping recording...")
+            self.current_keys.clear()
+            
+            thread = threading.Thread(target=self._stop_f9_voice_and_replace)
+            thread.daemon = True
+            thread.start()
+        else:
+            # Start recording
+            print("\n" + "="*70)
+            print("🎤 F9 - Voice Recording Started")
+            print("="*70)
+            print("🔴 Recording... Press F9 again to stop and replace selected text")
+            print("   (In mock mode: will auto-stop after 3 seconds)")
+            
+            self.current_keys.clear()
+            self.is_recording_voice_f9 = True
+            
+            # Start recording
+            if self.voice_handler and not VOICE_MOCK_MODE:
+                try:
+                    self.voice_handler.start_recording()
+                    print("✅ Voice handler started")
+                except Exception as e:
+                    print(f"❌ Error starting recording: {e}")
+                    self.is_recording_voice_f9 = False
+            else:
+                # Mock mode - auto-stop after delay
+                print("🧪 Mock mode - will auto-transcribe in 3 seconds...")
+                def auto_stop():
+                    time.sleep(3)
+                    if self.is_recording_voice_f9:
+                        self._stop_f9_voice_and_replace()
+                
+                thread = threading.Thread(target=auto_stop)
+                thread.daemon = True
+                thread.start()
     
     def trigger_voice_input(self):
         """OBJECTIVE 3: Voice recording → Transcribe → Show in popup"""
@@ -314,6 +364,51 @@ class AIKeyboardController(QObject):
             time.sleep(0.2)
             self.is_processing = False
             print("⏳ Ready for next selection!\n")
+    
+    def _stop_f9_voice_and_replace(self):
+        """Background thread: Stop F9 recording, transcribe, and replace selected text"""
+        try:
+            self.is_recording_voice_f9 = False
+            
+            # Stop recording and transcribe
+            if self.voice_handler and not VOICE_MOCK_MODE:
+                print("🔄 Transcribing...")
+                transcribed = self.voice_handler.stop_recording_and_transcribe()
+            else:
+                # Mock transcription
+                print("🎤 [MOCK] Simulating transcription...")
+                time.sleep(1)
+                transcribed = "This is a mock voice transcription replacing your selected text."
+            
+            print(f"\n🎤 Transcribed: '{transcribed}'")
+            
+            # Now paste to replace selected text
+            print("4️⃣  Replacing selected text with transcription...")
+            time.sleep(0.3)
+            
+            # Save original clipboard
+            original_clip = pyperclip.paste()
+            
+            # Copy transcribed text to clipboard
+            pyperclip.copy(transcribed)
+            time.sleep(0.2)
+            
+            # Paste to replace selection
+            self.send_ctrl_v()
+            time.sleep(0.2)
+            
+            # Restore clipboard
+            pyperclip.copy(original_clip)
+            
+            print("\n" + "="*70)
+            print("✅ ✅ ✅  Voice text pasted! Check your app!")
+            print("="*70)
+            print("\n⏳ Ready for next F9 trigger...\n")
+            
+        except Exception as e:
+            print(f"\n❌ Voice error: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _stop_voice_recording(self):
         """Background thread: Stop recording and transcribe"""
@@ -460,18 +555,20 @@ class AIKeyboardController(QObject):
         print("🚀 UNIFIED AI KEYBOARD - ALL OBJECTIVES")
         print("="*70)
         print("\n✨ FEATURES:")
-        print("   1️⃣  Text Selection → AI Rewrite (Direct Paste)")
+        print("   1️⃣  Voice Selection → Transcribe → Replace (F9)")
+        print("       Hotkey: F9")
+        print("       • Select any text or letter in any app")
+        print("       • Press F9 to start voice recording")
+        print("       • Press F9 again to stop & replace with transcription")
+        print("       • Transcribed text replaces your selection automatically")
+        print()
+        print("   2️⃣  Text Selection → AI Rewrite (Direct Paste)")
         print("       Hotkey: Ctrl + Space")
         print("       • Select text in any app")
         print("       • Press Ctrl+Space")
         print("       • AI response pastes directly (no popup)")
         print()
-        print("   2️⃣  Voice Input with Popup Confirmation")
-        print("       • Voice transcription shows in popup")
-        print("       • Tab to accept/paste")
-        print("       • Esc to reject")
-        print()
-        print("   3️⃣  Voice Input → Transcribe → Paste")
+        print("   3️⃣  Voice Input → Transcribe → Paste (with Popup)")
         print("       Hotkey: Ctrl + Shift + V")
         print("       • Press once to start recording")
         print("       • Press again to stop & transcribe")
