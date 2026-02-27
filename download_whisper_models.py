@@ -8,8 +8,10 @@ import os
 def download_models():
     models = {
         'tiny': '39MB - Fastest, good for testing',
-        'base': '140MB - Recommended balance',
-        'small': '470MB - Better accuracy'
+        'base': '140MB - Good balance',
+        'small': '470MB - Better accuracy (recommended)',
+        'medium': '1.5GB - High accuracy',
+        'large': '3GB - Best accuracy'
     }
     
     print("=" * 60)
@@ -25,7 +27,7 @@ def download_models():
     
     print("\n" + "=" * 60)
     
-    for model_name in ['tiny', 'base']:
+    for model_name in ['tiny', 'base', 'small']:
         try:
             print(f"\n🔄 Downloading {model_name} model...")
             model = whisper.load_model(model_name)

@@ -27,15 +27,16 @@ except ImportError:
 
 # Try to import voice module
 try:
-    from ui_module.voice_input import VoiceInputHandler
+    from ui_module.voice_input import voice_handler  # Use the singleton that works!
     VOICE_AVAILABLE = True
 except ImportError:
     VOICE_AVAILABLE = False
+    voice_handler = None
 
 
 # Configuration
 MOCK_MODE = False  # Set to True for mock mode (no AI required)
-VOICE_MOCK_MODE = True  # Set to False to use real voice (requires Whisper)
+VOICE_MOCK_MODE = False  # Set to False to use real voice (requires Whisper)
 AI_API_URL = "http://localhost:8000/process_text"
 COOLDOWN_SECONDS = 0.5  # Reduced cooldown for faster re-triggering
 PASTE_DELAY = 0.3
@@ -59,13 +60,16 @@ class AIKeyboardController(QObject):
         self.is_recording_voice = False
         self.is_recording_voice_f9 = False  # F9 voice recording state
         self.voice_text = ""
-        self.voice_handler = None
-        if VOICE_AVAILABLE and not VOICE_MOCK_MODE:
-            try:
-                self.voice_handler = VoiceInputHandler(mock_mode=False, model_size="base")
-            except Exception as e:
-                print(f"⚠️ Voice handler init failed: {e}")
-                self.voice_handler = None
+        
+        # Use the singleton voice handler (same one used in test_voice_whisper.py)
+        if VOICE_AVAILABLE:
+            print("🎤 Voice: Using real Whisper (same as test_voice_whisper.py)")
+            if voice_handler.mock_mode:
+                print("⚠️  Voice handler in mock mode (missing dependencies)")
+            else:
+                print(f"✅ Voice handler ready - model: {voice_handler.model_size}")
+        else:
+            print("⚠️ Voice module not available - install requirements_ui.txt")
         
         # Popup window
         self.popup = None
@@ -222,23 +226,33 @@ class AIKeyboardController(QObject):
             print("\n" + "="*70)
             print("🎤 F9 - Voice Recording Started")
             print("="*70)
-            print("🔴 Recording... Press F9 again to stop and replace selected text")
-            print("   (In mock mode: will auto-stop after 3 seconds)")
+            
+            if voice_handler.mock_mode:
+                print("🧪 MOCK MODE: Will auto-transcribe in 3 seconds...")
+            else:
+                print("🔴 RECORDING FROM MICROPHONE")
+                print("   🗣️  SPEAK NOW - Say what you want to replace the selection with")
+                print("   🔴 Press F9 again when finished speaking")
             
             self.current_keys.clear()
             self.is_recording_voice_f9 = True
             
-            # Start recording
-            if self.voice_handler and not VOICE_MOCK_MODE:
+            # Debug: Check voice_handler status before recording
+            print(f"🔍 DEBUG Start: VOICE_AVAILABLE={VOICE_AVAILABLE}, voice_handler exists={voice_handler is not None}, mock_mode={voice_handler.mock_mode if voice_handler else 'N/A'}")
+            
+            # Start recording using singleton voice_handler
+            if VOICE_AVAILABLE and voice_handler and not voice_handler.mock_mode:
                 try:
-                    self.voice_handler.start_recording()
-                    print("✅ Voice handler started")
+                    print(f"🔍 DEBUG Before start: is_recording={voice_handler.is_recording}")
+                    voice_handler.start_recording()
+                    time.sleep(0.2)  # Give it a moment to start
+                    print(f"✅ Microphone active - is_recording={voice_handler.is_recording}")
                 except Exception as e:
                     print(f"❌ Error starting recording: {e}")
+                    print("   💡 Check microphone permissions and try again")
                     self.is_recording_voice_f9 = False
             else:
                 # Mock mode - auto-stop after delay
-                print("🧪 Mock mode - will auto-transcribe in 3 seconds...")
                 def auto_stop():
                     time.sleep(3)
                     if self.is_recording_voice_f9:
@@ -271,10 +285,10 @@ class AIKeyboardController(QObject):
             self.current_keys.clear()
             self.is_recording_voice = True
             
-            # Start recording
-            if self.voice_handler and not VOICE_MOCK_MODE:
+            # Start recording using singleton voice_handler
+            if VOICE_AVAILABLE and not voice_handler.mock_mode:
                 try:
-                    self.voice_handler.start_recording()
+                    voice_handler.start_recording()
                     print("✅ Voice handler started")
                 except Exception as e:
                     print(f"❌ Error starting recording: {e}")
@@ -370,20 +384,31 @@ class AIKeyboardController(QObject):
         try:
             self.is_recording_voice_f9 = False
             
-            # Stop recording and transcribe
-            if self.voice_handler and not VOICE_MOCK_MODE:
-                print("🔄 Transcribing...")
-                transcribed = self.voice_handler.stop_recording_and_transcribe()
+            # Debug: Check voice_handler status
+            print(f"🔍 DEBUG Stop: VOICE_AVAILABLE={VOICE_AVAILABLE}, voice_handler={voice_handler is not None}, mock_mode={voice_handler.mock_mode if voice_handler else 'N/A'}")
+            print(f"🔍 DEBUG: voice_handler.is_recording={voice_handler.is_recording if voice_handler else 'N/A'}")
+            
+            # Stop recording and transcribe using singleton voice_handler
+            if VOICE_AVAILABLE and voice_handler and not voice_handler.mock_mode:
+                print("🔄 Processing audio with Whisper AI...")
+                transcribed = voice_handler.stop_recording_and_transcribe()
+                print(f"🔍 DEBUG: Transcription result = '{transcribed}'")
+                
+                if not transcribed or transcribed.startswith("["):
+                    print("⚠️  Could not transcribe audio. Please try again.")
+                    print("   Make sure you spoke clearly into the microphone.")
+                    return
             else:
-                # Mock transcription
+                # Mock transcription - this should NOT run if voice is working
                 print("🎤 [MOCK] Simulating transcription...")
+                print(f"   Why mock? VOICE_AVAILABLE={VOICE_AVAILABLE}, voice_handler exists={voice_handler is not None}, mock_mode={voice_handler.mock_mode if voice_handler else 'N/A'}")
                 time.sleep(1)
                 transcribed = "This is a mock voice transcription replacing your selected text."
             
-            print(f"\n🎤 Transcribed: '{transcribed}'")
+            print(f"\n✅ Transcribed: '{transcribed}'")
             
             # Now paste to replace selected text
-            print("4️⃣  Replacing selected text with transcription...")
+            print("📝 Replacing selected text with transcription...")
             time.sleep(0.3)
             
             # Save original clipboard
@@ -415,10 +440,10 @@ class AIKeyboardController(QObject):
         try:
             self.is_recording_voice = False
             
-            # Stop recording and transcribe
-            if self.voice_handler and not VOICE_MOCK_MODE:
+            # Stop recording and transcribe using singleton voice_handler
+            if VOICE_AVAILABLE and not voice_handler.mock_mode:
                 print("🔄 Transcribing...")
-                transcribed = self.voice_handler.stop_recording_and_transcribe()
+                transcribed = voice_handler.stop_recording_and_transcribe()
             else:
                 # Mock transcription
                 print("🎤 [MOCK] Simulating transcription...")
@@ -574,7 +599,17 @@ class AIKeyboardController(QObject):
         print("       • Press again to stop & transcribe")
         print("       • Tab to paste transcribed text")
         print()
-        print("⚙️  MODE:", "🧪 MOCK (for testing)" if MOCK_MODE else "🤖 REAL AI")
+        print("⚙️  AI MODE:", "🧪 MOCK (for testing)" if MOCK_MODE else "🤖 REAL AI")
+        
+        # Check actual voice_handler status
+        if VOICE_AVAILABLE and voice_handler:
+            voice_status = "🧪 MOCK (missing dependencies)" if voice_handler.mock_mode else "✅ REAL WHISPER"
+            print("🎤 VOICE MODE:", voice_status)
+            if not voice_handler.mock_mode:
+                print("   💡 Whisper model:", voice_handler.model_size)
+        else:
+            print("🎤 VOICE MODE: ❌ NOT AVAILABLE")
+            
         print("🛑 EXIT: Ctrl + Esc")
         print("\n⏳ Ready! Try it in Notepad, Word, VS Code, etc.")
         print("="*70 + "\n")

@@ -212,5 +212,6 @@ class VoiceInputHandler:
             print("🎤 Voice recording cancelled")
 
 
-# Singleton instance
-voice_handler = VoiceInputHandler()
+# Singleton instance with MEDIUM model (high accuracy, 1.5GB)
+# Models: tiny (39MB), base (140MB), small (470MB), medium (1.5GB), large (3GB)
+voice_handler = VoiceInputHandler(mock_mode=False, model_size="medium")
